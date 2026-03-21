@@ -370,10 +370,10 @@ TJ-Simulator/
 | | Nombre | |
 |:---:|:---|:---:|
 | 🧑‍💻 | **José Pardiñaz** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/josepardinaz/) |
-| 🧑‍💻 | **Daniel Pinzón** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jose-daniel-pinzon-vivas/) |
-| 🧑‍💻 | **Geovanny Giorgana** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/geovanny-giorgana-784465157/) |
 | 🧑‍💻 | **César Franco** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/cesar-franco-flores-a6347630b/) |
 | 🧑‍💻 | **Angélica Bonilla** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/ang%C3%A9lica-bonilla-velasco-074266262/) |
+| 🧑‍💻 | **Daniel Pinzón** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jose-daniel-pinzon-vivas/) |
+| 🧑‍💻 | **Geovanny Giorgana** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/geovanny-giorgana-784465157/) |
 
 <br>
 
