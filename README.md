@@ -38,6 +38,8 @@ Un **firmware PlatformIO para ESP32-S3** que implementa los mismos algoritmos de
 
 El laberinto estándar de competencia es **16×16 celdas de 18 cm**, con robot de máximo **10×10 cm**. Los motores operan a ~67 RPM efectivos (100 RPM @ 6V, alimentados a 4V), cubriendo una celda en ~2.2 s durante exploración.
 
+ESTE SOFTWARE SOLO SE UTILIZÓ PARA OPTIMIZAR LOS ALGORITMOS PREVIOS A TENER UN LABERINTO FÍSICO. AL MOMENTO DE LA COMPETICIÓN SE MANTIENE DESCONECTADO EN TODO MOMENTO.
+
 ---
 
 ## Características
