@@ -12,6 +12,7 @@ from maze import Maze
 from maze_gen import generate
 from robot import Robot
 from algorithms import ALGORITHMS, ALGO_DESCRIPTIONS, get_algorithm
+from telemetry import TelemetryRecorder, TelemetrySession, ReplayController, GhostState, list_sessions, SAMPLE_MS
 
 pygame.init()
 pygame.font.init()
@@ -708,6 +709,24 @@ class TJSimulator:
         self.sim_robot_ms=0; self._step_acc=0.0
         self._peeked=None
         self.edit_mode=False
+        # ── Tabs: 'sim' | 'replay' ───────────────────────────
+        self._active_tab  = 'sim'
+        # ── Telemetria ───────────────────────────────────────
+        self._recorder    = None    # grabacion activa
+        self._recording   = False
+        self._last_sample = 0    # ms del ultimo muestreo
+        # Canal activo de replay: 'A' | 'B' | 'both'
+        self._replay_ch   = 'A'
+        # Canales de replay (A=sim, B=ESP32)
+        self._sess_A      = None    # TelemetrySession canal A (simulador)
+        self._sess_B      = None    # TelemetrySession canal B (ESP32)
+        self._replay_A    = None    # ReplayController A
+        self._replay_B    = None    # ReplayController B
+        self._replay_mode = False
+        # Ghost robot B (posicion del ESP32 en replay dual)
+        self._ghost       = GhostState()
+        # Compat alias
+        self._replay_sess = None
 
         self.solution_path=self.maze.solve()
         W,H=SCREEN_W,SCREEN_H
@@ -723,55 +742,122 @@ class TJSimulator:
                          f"Celda real: {RC.MS_PER_CELL/1000:.2f}s",C_TEXT_M)
 
     def _build_widgets(self):
-        self.btn_gen=Button((0,0,1,1),"GENERAR")
-        self.btn_load=Button((0,0,1,1),"CARGAR")
-        self.btn_save=Button((0,0,1,1),"GUARDAR")
-        self.btn_edit=Button((0,0,1,1),"EDITAR",C_CARD)
-        self.btn_robot_cfg=Button((0,0,1,1),"Config Robot",C_CARD)
-        self.dd_algo=DropDown((0,0,1,1),ALGORITHMS,0)
-        self.sl_speed=Slider((0,0,1,1),"Velocidad",list(RC.PHYSICS_SPEEDS.keys()),1)
-        self.btn_run=Button((0,0,1,1),">> RUN",C_RED,C_TEXT_H)
-        self.btn_pause=Button((0,0,1,1),"|| PAUSE")
-        self.btn_step=Button((0,0,1,1),">| STEP")
-        self.btn_reset=Button((0,0,1,1),"<> RESET")
-        self.btn_flood=Button((0,0,1,1),"Flood Fill")
-        self.btn_sol=Button((0,0,1,1),"Solucion")
-        self.btn_sensors=Button((0,0,1,1),"Sensores")
-        self.btn_visited=Button((0,0,1,1),"Visitadas")
-        self.btn_clear=Button((0,0,1,1),"Limpiar consola")
+        # ── Tabs ──────────────────────────────────────────────
+        self.btn_tab_sim    = Button((0,0,1,1),"SIMULADOR", C_RED, C_TEXT_H)
+        self.btn_tab_rep    = Button((0,0,1,1),"REPLAY",    C_CARD)
+        # ── Tab SIM ───────────────────────────────────────────
+        self.btn_gen        = Button((0,0,1,1),"GENERAR")
+        self.btn_load       = Button((0,0,1,1),"CARGAR")
+        self.btn_save       = Button((0,0,1,1),"GUARDAR")
+        self.btn_edit       = Button((0,0,1,1),"EDITAR", C_CARD)
+        self.btn_robot_cfg  = Button((0,0,1,1),"Config Robot", C_CARD)
+        self.dd_algo        = DropDown((0,0,1,1),ALGORITHMS,0)
+        self.sl_speed       = Slider((0,0,1,1),"Velocidad",list(RC.PHYSICS_SPEEDS.keys()),1)
+        self.btn_run        = Button((0,0,1,1),">> RUN",  C_RED, C_TEXT_H)
+        self.btn_pause      = Button((0,0,1,1),"|| PAUSE")
+        self.btn_reset      = Button((0,0,1,1),"<> RESET")
+        self.btn_flood      = Button((0,0,1,1),"Flood Fill")
+        self.btn_sol        = Button((0,0,1,1),"Solucion")
+        self.btn_sensors    = Button((0,0,1,1),"Sensores")
+        self.btn_visited    = Button((0,0,1,1),"Visitadas")
+        self.btn_clear      = Button((0,0,1,1),"Limpiar consola")
+        # ── Tab REPLAY ────────────────────────────────────────
+        # Grabar sesion actual
+        self.btn_record     = Button((0,0,1,1),"[ ] GRABAR", C_CARD)
+        # Cargar archivos
+        self.btn_load_A     = Button((0,0,1,1),"Cargar Sim",  C_CARD)
+        self.btn_load_B     = Button((0,0,1,1),"Cargar ESP32",C_CARD)
+        self.btn_clear_A    = Button((0,0,1,1),"X", C_CARD)
+        self.btn_clear_B    = Button((0,0,1,1),"X", C_CARD)
+        # Canal activo: SIM / ESP32 / AMBOS
+        self.btn_ch_A       = Button((0,0,1,1),"SIM",  C_TEAL,  C_TEXT_H)
+        self.btn_ch_B       = Button((0,0,1,1),"ESP32",(130,70,0),C_TEXT_H)
+        self.btn_ch_both    = Button((0,0,1,1),"AMBOS",C_CARD)
+        # Controles de reproduccion
+        self.btn_tel_play   = Button((0,0,1,1),">> REPRODUCIR", C_TEAL, C_TEXT_H)
+        self.btn_tel_pause  = Button((0,0,1,1),"|| PAUSA")
+        self.btn_tel_exit   = Button((0,0,1,1),"X SALIR REPLAY", C_RED_D)
+        self.sl_replay_spd  = Slider((0,0,1,1),"Velocidad",["0.5x","1x","2x","5x","10x"],1)
+        # compat aliases
+        self.btn_step       = self.btn_tel_play
+        self.btn_tel_load   = self.btn_load_A
 
     def _layout(self, W, H):
-        px=W-PANEL_W+8; pw=PANEL_W-16; bw=(pw-4)//2
-        bot=H-CONSOLE_H-4; y=HEADER_H+6
+        px=W-PANEL_W+8; pw=PANEL_W-16; bw=(pw-4)//2; bw3=(pw-8)//3
+        bot=H-CONSOLE_H-4
+        self._px=px; self._pw=pw
 
-        y+=SH  # LABERINTO
-        self.btn_gen.rect=pygame.Rect(px,y,pw,BH); y+=BH+GAP
-        self.btn_load.rect=pygame.Rect(px,y,bw,BH)
-        self.btn_save.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+GAP
-        self.btn_edit.rect=pygame.Rect(px,y,bw,BH)
-        self.btn_robot_cfg.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+GAP
-        y+=SEP
+        # ── Tabs (always visible, top) ────────────────────────
+        ty = HEADER_H+6
+        self.btn_tab_sim.rect = pygame.Rect(px,    ty, pw//2-2, BH)
+        self.btn_tab_rep.rect = pygame.Rect(px+pw//2+2, ty, pw//2-2, BH)
+        y = ty + BH + SEP
 
-        y+=SH  # ALGORITMO
-        self.dd_algo.rect=pygame.Rect(px,y,pw,BH); y+=BH+GAP
-        self._algo_desc_y=y; y+=3*13+GAP+SEP
+        # Move replay buttons off-screen when not in replay tab
+        if self._active_tab == 'sim':
+            for _b in [self.btn_record, self.btn_load_A, self.btn_load_B,
+                       self.btn_clear_A, self.btn_clear_B, self.btn_ch_A,
+                       self.btn_ch_B, self.btn_ch_both, self.btn_tel_play,
+                       self.btn_tel_pause, self.btn_tel_exit]:
+                _b.rect.x = -9999
 
-        y+=SH  # VELOCIDAD
-        self.sl_speed.rect=pygame.Rect(px,y,pw,1); y+=30+SEP
+        if self._active_tab == 'sim':
+            # ── TAB SIMULADOR ─────────────────────────────────
+            y+=SH  # LABERINTO
+            self.btn_gen.rect=pygame.Rect(px,y,pw,BH); y+=BH+GAP
+            self.btn_load.rect=pygame.Rect(px,y,bw,BH)
+            self.btn_save.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+GAP
+            self.btn_edit.rect=pygame.Rect(px,y,bw,BH)
+            self.btn_robot_cfg.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+SEP
 
-        y+=SH  # CONTROL
-        self.btn_run.rect=pygame.Rect(px,y,bw,BH)
-        self.btn_pause.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+GAP
-        self.btn_step.rect=pygame.Rect(px,y,bw,BH)
-        self.btn_reset.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+SEP
+            y+=SH  # ALGORITMO
+            self.dd_algo.rect=pygame.Rect(px,y,pw,BH); y+=BH+GAP
+            self._algo_desc_y=y; y+=3*13+GAP+SEP
 
-        y+=SH  # VISUALIZAR
-        self.btn_flood.rect=pygame.Rect(px,y,bw,BH2)
-        self.btn_sol.rect=pygame.Rect(px+bw+4,y,bw,BH2); y+=BH2+GAP
-        self.btn_sensors.rect=pygame.Rect(px,y,bw,BH2)
-        self.btn_visited.rect=pygame.Rect(px+bw+4,y,bw,BH2); y+=BH2+SEP
+            y+=SH  # VELOCIDAD
+            self.sl_speed.rect=pygame.Rect(px,y,pw,1); y+=30+SEP
 
-        self._robot_y=y; self._robot_bot=bot; self._px=px; self._pw=pw
+            y+=SH  # CONTROL
+            self.btn_run.rect=pygame.Rect(px,y,bw,BH)
+            self.btn_pause.rect=pygame.Rect(px+bw+4,y,bw,BH); y+=BH+GAP
+            self.btn_reset.rect=pygame.Rect(px,y,pw,BH); y+=BH+SEP
+
+            y+=SH  # VISUALIZAR
+            self.btn_flood.rect=pygame.Rect(px,y,bw,BH2)
+            self.btn_sol.rect=pygame.Rect(px+bw+4,y,bw,BH2); y+=BH2+GAP
+            self.btn_sensors.rect=pygame.Rect(px,y,bw,BH2)
+            self.btn_visited.rect=pygame.Rect(px+bw+4,y,bw,BH2); y+=BH2+SEP
+
+            # Sensores pegados al fondo del panel
+            self._robot_y=y; self._robot_bot=bot
+
+        else:
+            # ── TAB REPLAY ────────────────────────────────────
+            y = ty + BH + SEP + SH  # below tabs, section header
+            self.btn_record.rect=pygame.Rect(px,y,pw,BH); y+=BH+SEP
+
+            y+=SH  # CARGAR
+            self.btn_load_A.rect=pygame.Rect(px,y,pw-BH-4,BH)
+            self.btn_clear_A.rect=pygame.Rect(px+pw-BH,y,BH,BH); y+=BH+GAP
+            self.btn_load_B.rect=pygame.Rect(px,y,pw-BH-4,BH)
+            self.btn_clear_B.rect=pygame.Rect(px+pw-BH,y,BH,BH); y+=BH+SEP
+
+            y+=SH  # CANAL
+            self.btn_ch_A.rect   =pygame.Rect(px,         y, bw3,   BH)
+            self.btn_ch_B.rect   =pygame.Rect(px+bw3+4,   y, bw3,   BH)
+            self.btn_ch_both.rect=pygame.Rect(px+2*(bw3+4),y, bw3,   BH); y+=BH+SEP
+
+            y+=SH  # REPRODUCCION
+            self.btn_tel_play.rect =pygame.Rect(px,y,pw,BH); y+=BH+GAP
+            self.btn_tel_pause.rect=pygame.Rect(px,y,bw,BH); y+=BH+GAP
+            self.sl_replay_spd.rect=pygame.Rect(px,y,pw,1);  y+=30+GAP
+            self.btn_tel_exit.rect =pygame.Rect(px,y,pw,BH); y+=BH+SEP
+
+            # Info sesiones pegado al fondo
+            self._replay_info_y = y
+            self._robot_y = bot  # no sensor panel in replay tab
+            self._robot_bot = bot
+
         self.btn_clear.rect=pygame.Rect(px,H-CONSOLE_H+4,pw,22)
 
     def run(self):
@@ -811,53 +897,72 @@ class TJSimulator:
         elif ev.key==pygame.K_o and(ev.mod&pygame.KMOD_CTRL): self._do_load()
 
     def _ui(self, ev):
-        # When a dropdown is open, let ONLY that dropdown handle the event
-        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-            for dd in [self.dd_algo]:
-                if dd.open:
-                    dd.handle_event(ev)
-                    return   # eat click so buttons below don't fire
+        # ── Tab buttons always active ─────────────────────────
+        if self.btn_tab_sim.handle_event(ev):
+            self._active_tab = 'sim'
+            W,H = self.screen.get_size(); self._layout(W,H); return
+        if self.btn_tab_rep.handle_event(ev):
+            self._active_tab = 'replay'
+            W,H = self.screen.get_size(); self._layout(W,H); return
 
-        # All widget handlers
-        if self.btn_run.handle_event(ev):     self._toggle_run()
-        if self.btn_pause.handle_event(ev):   self._toggle_pause()
-        if self.btn_step.handle_event(ev):    self._do_step()
-        if self.btn_reset.handle_event(ev):   self._do_reset()
-        if self.btn_gen.handle_event(ev):     self._do_gen()
-        if self.btn_load.handle_event(ev):    self._do_load()
-        if self.btn_save.handle_event(ev):    self._do_save()
-        if self.btn_clear.handle_event(ev):   self.console.clear()
 
-        # EDITAR — toggles edit mode directly
-        if self.btn_edit.handle_event(ev):
-            self.edit_mode = not self.edit_mode
-            if self.edit_mode:
+        # ── Limpiar consola always ────────────────────────────
+        if self.btn_clear.handle_event(ev):
+            self.console.clear(); return
+
+        if self._active_tab == 'sim':
+            # ── Block if dropdown open ─────────────────────────
+            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                if self.dd_algo.open:
+                    self.dd_algo.handle_event(ev); return
+
+            # ── Sim controls ──────────────────────────────────
+            if self.btn_robot_cfg.handle_event(ev):
+                W,H=self.screen.get_size()
+                self._rcfg.sw=W; self._rcfg.sh=H; self._rcfg._build()
+                self._rcfg.visible=True
+            elif self.btn_run.handle_event(ev):     self._toggle_run()
+            elif self.btn_pause.handle_event(ev): self._toggle_pause()
+            elif self.btn_reset.handle_event(ev): self._do_reset()
+            elif self.btn_gen.handle_event(ev):   self._do_gen()
+            elif self.btn_load.handle_event(ev):  self._do_load()
+            elif self.btn_save.handle_event(ev):  self._do_save()
+            elif self.btn_edit.handle_event(ev):
+                self.edit_mode = not self.edit_mode
                 self.console.log(
-                    "EDITAR ON  |  Click-Izq=toggle pared  "
-                    "Click-Der=mover inicio  Shift+Click-Der=mover meta  "
-                    "E=salir", C_YELLOW)
-            else:
-                self.console.log("Modo edicion OFF", C_TEXT_L)
+                    "EDITAR ON  |  Click-Izq=pared  Click-Der=inicio  "
+                    "Shift+Click-Der=meta  E=salir" if self.edit_mode
+                    else "Modo edicion OFF",
+                    C_YELLOW if self.edit_mode else C_TEXT_L)
+            elif self.btn_flood.handle_event(ev):
+                self.renderer.show_flood    = not self.renderer.show_flood
+            elif self.btn_sol.handle_event(ev):
+                self.renderer.show_solution = not self.renderer.show_solution
+            elif self.btn_sensors.handle_event(ev):
+                self.renderer.show_sensors  = not self.renderer.show_sensors
+            elif self.btn_visited.handle_event(ev):
+                self.renderer.show_visited  = not self.renderer.show_visited
+            # Dropdown and slider — not elif so they catch all events
+            if self.dd_algo.handle_event(ev):
+                self.algo_name = self.dd_algo.value
+                if self.sim_running: self._do_reset()
+                self.console.log(f"Algoritmo: {self.algo_name}", C_YELLOW)
+                W,H = self.screen.get_size(); self._layout(W,H)
+            self.sl_speed.handle_event(ev)
 
-        if self.btn_robot_cfg.handle_event(ev):
-            W,H=self.screen.get_size()
-            self._rcfg.sw=W; self._rcfg.sh=H; self._rcfg._build()
-            self._rcfg.visible=True
-
-        if self.btn_flood.handle_event(ev):   self.renderer.show_flood    = not self.renderer.show_flood
-        if self.btn_sol.handle_event(ev):     self.renderer.show_solution = not self.renderer.show_solution
-        if self.btn_sensors.handle_event(ev): self.renderer.show_sensors  = not self.renderer.show_sensors
-        if self.btn_visited.handle_event(ev): self.renderer.show_visited  = not self.renderer.show_visited
-
-        # Algorithm dropdown
-        if self.dd_algo.handle_event(ev):
-            self.algo_name = self.dd_algo.value
-            if self.sim_running: self._do_reset()
-            self.console.log(f"Algoritmo: {self.algo_name}", C_YELLOW)
-            W,H = self.screen.get_size(); self._layout(W,H)
-
-
-        self.sl_speed.handle_event(ev)
+        else:  # replay tab
+            if self.btn_record.handle_event(ev):   self._toggle_record()
+            elif self.btn_load_A.handle_event(ev): self._load_session('A')
+            elif self.btn_load_B.handle_event(ev): self._load_session('B')
+            elif self.btn_clear_A.handle_event(ev):self._clear_session('A')
+            elif self.btn_clear_B.handle_event(ev):self._clear_session('B')
+            elif self.btn_ch_A.handle_event(ev):   self._set_channel('A')
+            elif self.btn_ch_B.handle_event(ev):   self._set_channel('B')
+            elif self.btn_ch_both.handle_event(ev):self._set_channel('both')
+            elif self.btn_tel_play.handle_event(ev):  self._start_replay()
+            elif self.btn_tel_pause.handle_event(ev): self._pause_replay()
+            elif self.btn_tel_exit.handle_event(ev):  self._exit_replay()
+            self.sl_replay_spd.handle_event(ev)
 
     def _handle_edit_modal_click(self, ev):
         return False  # deprecated
@@ -987,19 +1092,22 @@ class TJSimulator:
         except Exception as e: self.console.log(f"Error: {e}",C_RED)
 
     def _exec_action(self, action):
-        """Apply one action directly."""
+        """Apply one action and record to telemetry."""
+        ev_map = {'forward':'FWD','left':'TURN_L','right':'TURN_R','180':'TURN_180'}
         if action == 'forward':
             ok = self.robot.move_forward()
             if ok:
                 self.sim_robot_ms += RC.MS_PER_CELL
                 self.console.log(f"  -> ({self.robot.col},{self.robot.row})", C_TEXT_M)
+                self._tel_log('FWD')
                 if self.robot.is_at_goal(): self._on_goal()
         elif action in ('left', 'right', '180'):
-            if action == 'left':   self.robot.turn_left()
+            if action == 'left':    self.robot.turn_left()
             elif action == 'right': self.robot.turn_right()
             else:                   self.robot.turn_180()
             self.sim_robot_ms += RC.MS_PER_90 * (2 if action == '180' else 1)
             self.console.log(f"  {action} [{self.robot.heading}]", C_TEXT_L)
+            self._tel_log(ev_map.get(action,'TURN'))
         elif action == 'done':
             self._on_done()
 
@@ -1014,6 +1122,11 @@ class TJSimulator:
         self._exec_action(action)
 
     def _on_goal(self):
+        self._tel_log('GOAL')
+        if self._recorder:
+            self._recorder.close(); self._recorder=None
+            self._recording=False
+            self.console.log('[TEL] Grabacion guardada (meta alcanzada).', C_GREEN)
         rms=self.sim_robot_ms; ws=int((time.time()-self.start_time)*1000) if self.start_time else 0
         self.sim_running=False
         self.console.log("",C_TEXT_M)
@@ -1044,6 +1157,30 @@ class TJSimulator:
         # Real-time flood fill visualization: recompute distances each frame
         if self.renderer.show_flood and self.sim_running and not self.sim_paused:
             self.maze.compute_flood()
+
+        # ── Replay tick (must run even when sim_running=False) ──
+        if self._replay_mode and not self.sim_paused:
+            fin_A = fin_B = True
+            if self._replay_A and self._replay_ch in ('A','both'):
+                evs = self._replay_A.tick(dt)
+                if evs:
+                    for ev in evs:
+                        self.console.log(
+                            f"  [SIM {ev['ts_ms']:5d}ms] {ev['event']} "
+                            f"({ev['x']},{ev['y']})", C_TEAL)
+                fin_A = self._replay_A.finished
+            if self._replay_B and self._replay_ch in ('B','both'):
+                evs_b = self._replay_B.tick(dt)
+                if evs_b:
+                    for ev in evs_b:
+                        self.console.log(
+                            f"  [ESP {ev['ts_ms']:5d}ms] {ev['event']} "
+                            f"({ev['x']},{ev['y']})", (255,160,0))
+                fin_B = self._replay_B.finished
+            if fin_A and fin_B:
+                self._replay_mode = False
+                self.console.log("[TEL] Replay terminado.", C_YELLOW)
+            return   # no correr algoritmo durante replay
 
         if not self.sim_running or self.sim_paused or self.algo_gen is None:
             return
@@ -1080,12 +1217,149 @@ class TJSimulator:
         elif action == 'done':
             self._peeked = None; self._on_done()
 
-    # ── Draw ─────────────────────────────────────────────────
+    # ── Telemetria helpers ──────────────────────────────────────
+
+    def _exit_replay(self):
+        self._replay_mode = False
+        self._replay_A = None; self._replay_B = None
+        if self._sess_A: self._sess_A.reset()
+        if self._sess_A: self._sess_A.reset()
+        if self._sess_B: self._sess_B.reset()
+        self._ghost = GhostState()
+        self.robot.reset()
+        self.console.log("[TEL] Saliste del modo replay.", C_YELLOW)
+
+    def _set_channel(self, ch):
+        self._replay_ch = ch
+        labels = {'A':'SIM (cyan)', 'B':'ESP32 (naranja)', 'both':'AMBOS'}
+        self.console.log(f"[TEL] Canal: {labels[ch]}", C_TEXT_L)
+
+    def _clear_session(self, ch):
+        if ch == 'A':
+            self._sess_A = None; self._replay_A = None
+            self._replay_sess = None
+            self.console.log("[TEL] Sesion SIM eliminada.", C_TEXT_L)
+        else:
+            self._sess_B = None; self._replay_B = None
+            self._ghost = GhostState()
+            self.console.log("[TEL] Sesion ESP32 eliminada.", C_TEXT_L)
+
+
+
+    # ── Grabacion manual ─────────────────────────────────────
+    def _toggle_record(self):
+        if not self._recording:
+            import datetime
+            ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            self._recorder  = TelemetryRecorder(f'sim_{ts}')
+            self._recording = True
+            self._tel_log('BOOT', f'algo={self.algo_name}')
+            self.console.log("[TEL] Grabando — juega el simulador para capturar.", C_RED)
+        else:
+            if self._recorder:
+                self._recorder.close()
+                self._recorder = None
+            self._recording = False
+            self.console.log("[TEL] Grabacion detenida.", C_TEXT_L)
+
+    def _tel_log(self, event='FWD', extra=''):
+        """Graba un waypoint — llamar en cada FWD/TURN/GOAL."""
+        if not self._recorder: return
+        now_ms = int((time.time()-self.start_time)*1000) if self.start_time else 0
+        r = self.robot
+        self._recorder.log(
+            ts_ms   = now_ms,
+            event   = event,
+            x=r.col, y=r.row,
+            heading = list('NESW').index(r.heading),
+            ang_z   = r.fangle,
+            enc1=r.enc1, enc2=r.enc2,
+            tof_izq=r._last_L, tof_cen=r._last_C, tof_der=r._last_R,
+        )
+
+    def _tel_sample(self, event='FWD', extra='', force=False):
+        self._tel_log(event, extra)
+
+    # ── Carga de sesiones A / B ───────────────────────────────
+    def _load_session(self, channel):
+        label = "Simulador" if channel=='A' else "ESP32"
+        path  = filedialog.askopenfilename(
+            title=f"Cargar sesion {label}",
+            filetypes=[("CSV","*.csv"),("Todos","*.*")], parent=_tk_root)
+        if not path: return
+        try:
+            sess = TelemetrySession(path)
+            s    = sess.summary()
+            if channel == 'A':
+                self._sess_A = sess
+                self._replay_sess = sess   # compat
+                col = C_TEAL
+            else:
+                self._sess_B = sess
+                col = (255, 160, 0)        # naranja para ESP32
+            self.console.log(
+                f"[TEL] {label}: {s['archivo'][:28]}  "
+                f"{s['eventos']} ev  {s['duracion_s']:.1f}s", col)
+        except Exception as e:
+            self.console.log(f"[TEL] Error: {e}", C_RED)
+
+    # ── Replay ───────────────────────────────────────────────
+    def _start_replay(self):
+        if not self._sess_A and not self._sess_B:
+            self.console.log("[TEL] Carga al menos un CSV primero.", C_YELLOW)
+            return
+        self._do_reset()
+        spd_map = {"0.5x":0.5,"1x":1.0,"2x":2.0,"5x":5.0,"10x":10.0}
+        spd = spd_map.get(self.sl_replay_spd.value, 1.0)
+        if self._sess_A:
+            self._sess_A.reset()
+            self._replay_A = ReplayController(self._sess_A, self.robot, self.maze,
+                                              ghost=False)
+            self._replay_A.set_speed(spd)
+        if self._sess_B:
+            self._sess_B.reset()
+            # Canal B usa ghost=True — no toca self.robot
+            self._replay_B = ReplayController(self._sess_B, self.robot, self.maze,
+                                              ghost=True)
+            self._replay_B.set_speed(spd)
+            self._ghost = GhostState()
+        self._replay_mode = True
+        loaded = []
+        if self._sess_A: loaded.append("Sim")
+        if self._sess_B: loaded.append("ESP32")
+        self.console.log(f"[TEL] Replay {spd}x — {' + '.join(loaded)}", C_TEAL)
+
+    def _pause_replay(self):
+        for rp in [self._replay_A, self._replay_B]:
+            if rp: rp.paused = not rp.paused
+        if self._replay_A and self._replay_A.paused:
+            self.console.log("[TEL] Replay pausado.", C_TEXT_L)
+        else:
+            self.console.log("[TEL] Replay reanudado.", C_TEXT_L)
+
+    def _step_replay(self, direction):
+        # Step en canal A (simulador)
+        sess = self._sess_A or self._sess_B
+        if not sess: return
+        if direction > 0 and not sess.done:
+            row = sess.next()
+            if self._replay_A: self._replay_A._apply(row)
+            self.console.log(
+                f"  [{row['ts_ms']}ms] {row['event']} ({row['x']},{row['y']})",
+                C_TEXT_M)
+        elif direction < 0 and sess.idx > 1:
+            row = sess.prev()
+            if self._replay_A: self._replay_A._apply(row)
+
+    # ── Telemetria — arrancar grabacion al iniciar sim ──────────
+        # ── Draw ─────────────────────────────────────────────────
     def _draw(self):
         W,H=self.screen.get_size()
         self.screen.fill(C_BG)
         self._draw_header(W)
         self.renderer.draw(self.screen,self.maze,self.robot)
+        if self._replay_mode:
+            self._draw_ghost_overlay(W,H)
         if self.edit_mode:
             bh=24; by=self.renderer.maze_rect.bottom-bh
             bar=pygame.Rect(self.renderer.maze_rect.x,by,self.renderer.maze_rect.w,bh)
@@ -1101,6 +1375,187 @@ class TJSimulator:
         self.console.draw(self.screen)
         self._rcfg.draw(self.screen)   # always on top
         pygame.display.flip()
+
+    def _draw_tab_sim(self, W, H, px, pw, bw, sec, lbl):
+        y_maze  = self.btn_gen.rect.y-SH
+        y_algo  = self.dd_algo.rect.y-SH
+        y_spd   = self.sl_speed.rect.y-SH-1
+        y_ctrl  = self.btn_run.rect.y-SH
+        y_vis   = self.btn_flood.rect.y-SH
+        y_robot = self._robot_y
+
+        sec("  LABERINTO",y_maze)
+        self.btn_gen.draw(self.screen)
+        self.btn_load.draw(self.screen); self.btn_save.draw(self.screen)
+        c=self.btn_edit.color
+        if self.edit_mode: self.btn_edit.color=C_RED_D
+        self.btn_edit.draw(self.screen); self.btn_edit.color=c
+        self.btn_robot_cfg.draw(self.screen)
+
+        sec("  ALGORITMO",y_algo)
+        y=self._algo_desc_y
+        for line in [l for l in ALGO_DESCRIPTIONS.get(self.algo_name,"").strip().split("\n") if l.strip()][:3]:
+            lbl(line,px+2,y,C_TEXT_L); y+=13
+
+        sec("  VELOCIDAD",y_spd)
+        self.sl_speed.draw(self.screen)
+        spd=RC.PHYSICS_SPEEDS[self.sl_speed.value]
+        lbl(f"  {spd['move']:.2f} c/s  {spd['rot']:.0f} deg/s",
+            px,self.sl_speed.rect.y+28,C_TEXT_L)
+
+        sec("  CONTROL",y_ctrl)
+        self.btn_run.draw(self.screen); self.btn_pause.draw(self.screen)
+        self.btn_reset.draw(self.screen)
+
+        sec("  VISUALIZAR",y_vis)
+        for btn,active in [(self.btn_flood,self.renderer.show_flood),
+                           (self.btn_sol,  self.renderer.show_solution),
+                           (self.btn_sensors,self.renderer.show_sensors),
+                           (self.btn_visited,self.renderer.show_visited)]:
+            btn.color=C_RED_D if active else C_CARD; btn.draw(self.screen)
+
+        if y_robot+SH+10<self._robot_bot:
+            sec("  ROBOT / SENSORES",y_robot)
+            y=y_robot+SH+4
+            for line in self.robot.status_lines():
+                if y+13>self._robot_bot: break
+                if '**' in line:     c=C_GREEN
+                elif 'TOF' in line:  c=C_TEAL
+                elif 'Enc' in line:  c=C_TEAL
+                elif 'IMU' in line or 'Ang' in line: c=C_YELLOW
+                elif 'PID' in line:  c=C_ORANGE
+                else:                c=C_TEXT_M
+                lbl(line,px,y,c); y+=13
+
+    def _draw_tab_replay(self, W, H, px, pw, bw, sec, lbl):
+        bw3=(pw-8)//3
+
+        sec("  GRABAR SESION", self.btn_record.rect.y-SH)
+        self.btn_record.color = C_RED_D if self._recording else C_CARD
+        self.btn_record.label = '[.] GRABANDO' if self._recording else '[ ] GRABAR'
+        self.btn_record.draw(self.screen)
+
+        sec("  CARGAR ARCHIVOS", self.btn_load_A.rect.y-SH)
+        # Canal A
+        has_A = self._sess_A is not None
+        self.btn_load_A.color = C_TEAL if has_A else C_CARD
+        self.btn_load_A.label = (f"Sim: {self._sess_A.path.name[:16]}.."
+                                 if has_A else "Cargar Sim")
+        self.btn_load_A.draw(self.screen)
+        self.btn_clear_A.draw(self.screen)
+        # Canal B
+        has_B = self._sess_B is not None
+        self.btn_load_B.color = (160,90,0) if has_B else C_CARD
+        self.btn_load_B.label = (f"ESP: {self._sess_B.path.name[:14]}.."
+                                 if has_B else "Cargar ESP32")
+        self.btn_load_B.draw(self.screen)
+        self.btn_clear_B.draw(self.screen)
+
+        sec("  CANAL ACTIVO", self.btn_ch_A.rect.y-SH)
+        ch = self._replay_ch
+        self.btn_ch_A.color    = C_TEAL       if ch=='A'    else C_CARD
+        self.btn_ch_B.color    = (160,90,0)   if ch=='B'    else C_CARD
+        self.btn_ch_both.color = C_RED_D      if ch=='both' else C_CARD
+        self.btn_ch_A.draw(self.screen)
+        self.btn_ch_B.draw(self.screen)
+        self.btn_ch_both.draw(self.screen)
+
+        sec("  REPRODUCCION", self.btn_tel_play.rect.y-SH)
+        self.btn_tel_play.color  = C_TEAL if self._replay_mode else C_CARD
+        self.btn_tel_play.draw(self.screen)
+        paused = self._replay_A and self._replay_A.paused
+        self.btn_tel_pause.color = C_YELLOW if paused else C_CARD
+        self.btn_tel_pause.draw(self.screen)
+        self.sl_replay_spd.draw(self.screen)
+        self.btn_tel_exit.draw(self.screen)
+
+        # Barras de progreso
+        bar_y = self.btn_tel_exit.rect.bottom + 8
+        for i, (sess, rp, col_bar, tag) in enumerate([
+                (self._sess_A, self._replay_A, C_TEAL, "SIM"),
+                (self._sess_B, self._replay_B, (255,140,0), "ESP")]):
+            if not sess: continue
+            by = bar_y + i*20
+            if by+18 > H-CONSOLE_H-20: break
+            idx, total = (rp.progress() if rp else (sess.idx, sess.total))
+            pct = idx / max(1,total)
+            pygame.draw.rect(self.screen, C_CARD,
+                             pygame.Rect(px,by,pw,7), border_radius=3)
+            if pct>0:
+                pygame.draw.rect(self.screen, col_bar,
+                                 pygame.Rect(px,by,int(pw*pct),7), border_radius=3)
+            dur = sess.summary()['duracion_s']
+            lbl(f"  {tag}: {idx}/{total}  ({dur:.1f}s)",px,by+8,col_bar)
+
+        # Sensores en tiempo real (canal activo durante replay)
+        sy = bar_y + 45
+        if self._replay_mode:
+            lbl("  SENSORES:", px, sy, C_TEXT_L); sy+=14
+            # Canal A (Sim) — cyan
+            if self._sess_A and self._replay_ch in ("A","both"):
+                r = self.robot
+                lbl(f"  SIM: IZQ {r._last_L:3d}  CEN {r._last_C:3d}  DER {r._last_R:3d} mm",
+                    px, sy, C_TEAL); sy+=13
+                lbl(f"  ang={r.fangle:.0f}  enc1={r.enc1:+d}",
+                    px, sy, C_TEAL); sy+=13
+            # Canal B (ESP32) — naranja (muestra ultima fila conocida)
+            if self._sess_B and self._replay_ch in ("B","both"):
+                row = self._sess_B.rows[max(0,self._sess_B.idx-1)] if self._sess_B.rows else None
+                g = self._ghost
+                lbl(f"  ESP: IZQ {g.tof_izq:3d}  CEN {g.tof_cen:3d}  DER {g.tof_der:3d} mm",
+                    px, sy, (255,160,0)); sy+=13
+                lbl(f"  ang={g.ang_z:.0f}  enc1={g.enc1:+d}",
+                    px, sy, (255,160,0)); sy+=13
+            sy+=4
+        # Sesiones recientes
+        lbl("  Recientes:", px, sy, C_TEXT_L); sy+=14
+        for sf in list_sessions()[:3]:
+            if sy+12 > H-CONSOLE_H-20: break
+            active = ((self._sess_A and self._sess_A.path==sf) or
+                      (self._sess_B and self._sess_B.path==sf))
+            lbl(f"  {sf.name[:30]}", px, sy, C_TEAL if active else C_TEXT_L)
+            sy+=13
+
+    def _draw_ghost_overlay(self, W, H):
+        """Modo Fantasma — sin SRCALPHA full-screen para rendimiento."""
+        import math as _m
+        mr  = self.renderer.maze_rect
+        x0, y0, cs = self.renderer.origin(self.maze)
+
+        # Borde del laberinto — solo 3px, sin tinte (costo ~0)
+        pygame.draw.rect(self.screen, (0, 180, 210), mr, 3, border_radius=4)
+
+        # Ghost B — dibujado DIRECTO sobre screen (sin Surface intermedia)
+        if self._replay_B and self._replay_ch in ('B','both'):
+            gx = x0 + self._replay_B.gfx * cs + cs/2
+            gy = y0 + self._replay_B.gfy * cs + cs/2
+            half = max(6, int(cs*0.40))//2
+            rad  = _m.radians(self._replay_B.gfa)
+            dx=_m.sin(rad); dy=-_m.cos(rad); px=-dy; py=dx
+            pts=[(int(gx+(lx*px-ly*dx)*half),
+                  int(gy+(lx*py-ly*dy)*half))
+                 for lx,ly in [(-1,-1),(1,-1),(1,1),(-1,1)]]
+            pygame.draw.polygon(self.screen,(220,100,0),pts)
+            pygame.draw.polygon(self.screen,(255,200,80),pts,2)
+            tip=(int(gx+dx*half),int(gy+dy*half))
+            tri=[(int(tip[0]+dx*half*.5),int(tip[1]+dy*half*.5)),
+                 (int(tip[0]+px*half*.35),int(tip[1]+py*half*.35)),
+                 (int(tip[0]-px*half*.35),int(tip[1]-py*half*.35))]
+            pygame.draw.polygon(self.screen,(255,220,0),tri)
+
+        # Banner compacto — solo un rect solido fino
+        bx=mr.x; by=mr.y; bw=mr.w
+        pygame.draw.rect(self.screen,(0,100,140),(bx,by,bw,22))
+        pA = f"{self._replay_A.progress()[0]}/{self._replay_A.progress()[1]}" if self._replay_A else "-"
+        pB = f"{self._replay_B.progress()[0]}/{self._replay_B.progress()[1]}" if self._replay_B else "-"
+        info = f"  MODO FANTASMA   SIM:{pA}   ESP32:{pB}"
+        self.screen.blit(FONT_XS.render(info,True,(200,230,255)),(bx+6,by+4))
+        # Leyenda inline
+        lx=mr.right-130; ly=by+5
+        pygame.draw.rect(self.screen,(0,180,210),(lx,ly,10,10),border_radius=2)
+        self.screen.blit(FONT_XS.render("Sim",True,(180,220,255)),(lx+13,ly))
+        pygame.draw.rect(self.screen,(220,100,0),(lx+48,ly,10,10),border_radius=2)
+        self.screen.blit(FONT_XS.render("ESP32",True,(255,180,100)),(lx+61,ly))
 
     def _draw_header(self, W):
         pygame.draw.rect(self.screen,C_PANEL,(0,0,W,HEADER_H))
@@ -1195,72 +1650,29 @@ class TJSimulator:
     def _draw_panel(self, W, H):
         pygame.draw.rect(self.screen,C_PANEL,(W-PANEL_W,HEADER_H,PANEL_W,H-HEADER_H))
         pygame.draw.line(self.screen,C_BORDER,(W-PANEL_W,HEADER_H),(W-PANEL_W,H),1)
-        px=self._px
+        px=self._px; pw=self._pw; bw=(pw-4)//2
 
         def sec(label,y):
             self.screen.blit(FONT_XS.render(label,True,C_TEXT_L),(px,y))
             pygame.draw.line(self.screen,C_DIVIDER,(px,y+14),(W-10,y+14),1)
-
         def lbl(text,x,y,col=None):
             self.screen.blit(FONT_XS.render(text,True,col or C_TEXT_M),(x,y))
 
-        y_maze=self.btn_gen.rect.y-SH
-        y_algo=self.dd_algo.rect.y-SH
-        y_spd=self.sl_speed.rect.y-SH-1
-        y_ctrl=self.btn_run.rect.y-SH
-        y_vis=self.btn_flood.rect.y-SH
-        y_robot=self._robot_y
+        # ── Tabs ─────────────────────────────────────────────
+        self.btn_tab_sim.color = C_RED_D if self._active_tab=='sim' else C_CARD
+        self.btn_tab_rep.color = C_TEAL  if self._active_tab=='replay' else C_CARD
+        self.btn_tab_sim.draw(self.screen)
+        self.btn_tab_rep.draw(self.screen)
 
-        sec("  LABERINTO",y_maze)
-        self.btn_gen.draw(self.screen)
-        self.btn_load.draw(self.screen); self.btn_save.draw(self.screen)
-        # Editar Laberinto: highlight when active
-        self.btn_edit.color = C_RED_D if self.edit_mode else C_CARD
-        self.btn_edit.draw(self.screen)
-        self.btn_robot_cfg.draw(self.screen)
-
-        sec("  ALGORITMO",y_algo)
-        y=self._algo_desc_y
-        for line in [l for l in ALGO_DESCRIPTIONS.get(self.algo_name,"").strip().split('\n') if l.strip()][:3]:
-            lbl(line,px+2,y,C_TEXT_L); y+=13
-
-        sec("  VELOCIDAD",y_spd)
-        self.sl_speed.draw(self.screen)
-        spd=RC.PHYSICS_SPEEDS[self.sl_speed.value]
-        lbl(f"  {spd['move']:.2f} c/s  {spd['rot']:.0f} deg/s",
-            px,self.sl_speed.rect.y+28,C_TEXT_L)
-
-        sec("  CONTROL",y_ctrl)
-        self.btn_run.draw(self.screen); self.btn_pause.draw(self.screen)
-        self.btn_step.draw(self.screen); self.btn_reset.draw(self.screen)
-
-        sec("  VISUALIZAR",y_vis)
-        for btn,active in [(self.btn_flood,self.renderer.show_flood),
-                           (self.btn_sol,  self.renderer.show_solution),
-                           (self.btn_sensors,self.renderer.show_sensors),
-                           (self.btn_visited,self.renderer.show_visited)]:
-            btn.color=C_RED_D if active else C_CARD; btn.draw(self.screen)
-
-        if y_robot+SH+10<self._robot_bot:
-            sec("  ROBOT / SENSORES",y_robot)
-            y=y_robot+SH+4
-            for line in self.robot.status_lines():
-                if y+13>self._robot_bot: break
-                if '**' in line: c=C_GREEN
-                elif 'TOF' in line: c=C_TEAL
-                elif 'Enc' in line: c=C_TEAL
-                elif 'IMU' in line or 'Ang' in line: c=C_YELLOW
-                elif 'PID' in line: c=C_ORANGE
-                else: c=C_TEXT_M
-                lbl(line,px,y,c); y+=13
+        if self._active_tab == 'sim':
+            self._draw_tab_sim(W,H,px,pw,bw,sec,lbl)
+        else:
+            self._draw_tab_replay(W,H,px,pw,bw,sec,lbl)
 
         self.btn_clear.rect.y=H-CONSOLE_H+4
         self.btn_clear.draw(self.screen)
-        self.screen.blit(FONT_XS.render("Space:Run  R:Reset  E:Edit  S:Step",True,C_TEXT_L),(px,H-14))
+        self.screen.blit(FONT_XS.render("Space:Run  R:Reset  E:Edit",True,C_TEXT_L),(px,H-14))
 
-        # Dropdowns on top
-        self.dd_algo.draw(self.screen)
-
-
-if __name__=='__main__':
-    app=TJSimulator(); app.run()
+        # Dropdowns always on top
+        if self._active_tab == 'sim':
+            self.dd_algo.draw(self.screen)

@@ -1,0 +1,2 @@
+ts_ms,event,x,y,heading,fx,fy,ang_z,enc1,enc2,tof_izq,tof_cen,tof_der,corr_pid,run_phase,extra
+0,BOOT,0,15,0,0.000,15.000,0.00,0,0,350,350,350,-0.7,0,algo=Right Wall Follower
