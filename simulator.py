@@ -250,7 +250,7 @@ class RobotConfigPanel:
         self.btn_load   = Button(pygame.Rect(bx+3*(bw+6), by, bw, 28), "CARGAR")
         self._status = ""
         # Schematic area
-        self._schema_rect = pygame.Rect(x0 + 380, y0 + 40, 310, 280)
+        self._schema_rect = pygame.Rect(x0 + 380, y0 + 36, 310, 220)
 
     # ── Derived info lines with (key, value, tooltip_key) ────
     def _derived(self):
@@ -338,19 +338,20 @@ class RobotConfigPanel:
         # Title
         surf.blit(FONT_XS.render("ESQUEMA ROBOT", True, C_TEXT_L),
                   (r.x + r.w//2 - 50, r.y + 6))
-        # Legend
-        ly = r.bottom - 58
+        # Legend — two columns below schema, inside panel
+        ly = r.bottom + 8
         legends = [
             ((200,20,20),  "Sensor frontal"),
             ((255,90,0),   "Sensores laterales"),
-            ((255,200,0),  "Centro de giro (offset Y)"),
+            ((255,200,0),  "Centro de giro (Y)"),
             ((140,140,150),"Eje de rueda"),
         ]
-        for i, (col, txt) in enumerate(legends):
-            lx = r.x + 8 + (i % 2) * (r.w//2)
-            row = ly + (i//2) * 14
-            pygame.draw.circle(surf, col, (lx+4, row+5), 4)
-            surf.blit(FONT_XS.render(txt, True, C_TEXT_L), (lx+12, row))
+        col_w = r.w // 2
+        for i, (c, txt) in enumerate(legends):
+            lx = r.x + 6 + (i % 2) * col_w
+            row = ly + (i // 2) * 15
+            pygame.draw.circle(surf, c, (lx + 4, row + 5), 4)
+            surf.blit(FONT_XS.render(txt, True, C_TEXT_L), (lx + 12, row))
 
     def draw(self, surf):
         if not self.visible: return
@@ -985,28 +986,32 @@ class TJSimulator:
             self.console.log(f"Guardado: {os.path.basename(path)}",C_GREEN)
         except Exception as e: self.console.log(f"Error: {e}",C_RED)
 
+    def _exec_action(self, action):
+        """Apply one action directly."""
+        if action == 'forward':
+            ok = self.robot.move_forward()
+            if ok:
+                self.sim_robot_ms += RC.MS_PER_CELL
+                self.console.log(f"  -> ({self.robot.col},{self.robot.row})", C_TEXT_M)
+                if self.robot.is_at_goal(): self._on_goal()
+        elif action in ('left', 'right', '180'):
+            if action == 'left':   self.robot.turn_left()
+            elif action == 'right': self.robot.turn_right()
+            else:                   self.robot.turn_180()
+            self.sim_robot_ms += RC.MS_PER_90 * (2 if action == '180' else 1)
+            self.console.log(f"  {action} [{self.robot.heading}]", C_TEXT_L)
+        elif action == 'done':
+            self._on_done()
+
     def _exec(self):
-        """Execute one logical action."""
+        """Execute one logical action (used by _do_step)."""
         if self.algo_gen is None: return
         if self._peeked is not None:
-            action=self._peeked; self._peeked=None
+            action = self._peeked; self._peeked = None
         else:
-            try: action=next(self.algo_gen)
+            try: action = next(self.algo_gen)
             except StopIteration: self._on_done(); return
-
-        if action=='forward':
-            ok=self.robot.move_forward()
-            if ok:
-                self.sim_robot_ms+=RC.MS_PER_CELL
-                self.console.log(f"  -> ({self.robot.col},{self.robot.row})",C_TEXT_M)
-                if self.robot.is_at_goal(): self._on_goal()
-        elif action in ('left','right','180'):
-            if action=='left':  self.robot.turn_left()
-            elif action=='right': self.robot.turn_right()
-            else: self.robot.turn_180()
-            self.sim_robot_ms+=(RC.MS_PER_90*2 if action=='180' else RC.MS_PER_90)
-            self.console.log(f"  {action} [{self.robot.heading}]",C_TEXT_L)
-        elif action=='done': self._on_done()
+        self._exec_action(action)
 
     def _on_goal(self):
         rms=self.sim_robot_ms; ws=int((time.time()-self.start_time)*1000) if self.start_time else 0
@@ -1043,33 +1048,37 @@ class TJSimulator:
         if not self.sim_running or self.sim_paused or self.algo_gen is None:
             return
 
-        # ── Logical timer (decoupled from animation) ──────────
-        interval=RC.STEP_MS.get(self.sl_speed.value,1000)
-        self._step_acc+=dt
-        # For turns: must wait until rotation animation finishes
-        # For forward: can chain (fire when progress >= 0.60)
-        if self._step_acc>=interval:
-            # Peek next action
-            if self._peeked is None:
-                try: self._peeked=next(self.algo_gen)
-                except StopIteration: self._on_done(); return
+        # ── Logical timer + continuous straight movement ─────
+        # Forwards chain at 30% progress = no pause between cells
+        # Turns wait for full idle = no diagonal glitch
+        interval = RC.STEP_MS.get(self.sl_speed.value, 1000)
+        self._step_acc += dt
 
-            action=self._peeked
-            if action in ('left','right','180'):
-                # Turns MUST wait for idle — never interrupt an animation
-                if not self.robot.is_busy():
-                    self._step_acc=0.0
-                    self._exec()
-            elif action=='forward':
-                # Forward: fire immediately or chain at 60% progress
-                can_fire=(not self.robot.is_busy() or
-                          (self.robot.state=='moving' and
-                           self.robot.move_progress>=0.45))
-                if can_fire:
-                    self._step_acc=0.0
-                    self._exec()
-            elif action=='done':
-                self._peeked=None; self._on_done()
+        if self._peeked is None:
+            try: self._peeked = next(self.algo_gen)
+            except StopIteration: self._on_done(); return
+
+        action = self._peeked
+
+        if action in ('left', 'right', '180'):
+            # Turns always wait for full idle
+            if not self.robot.is_busy():
+                self._step_acc = 0.0
+                self._peeked = None
+                self._exec_action(action)
+
+        elif action == 'forward':
+            # Chain at 30% so straight runs are truly continuous
+            can_fire = (not self.robot.is_busy() or
+                        (self.robot.state == 'moving' and
+                         self.robot.move_progress >= 0.30))
+            if can_fire:
+                self._step_acc = 0.0
+                self._peeked = None
+                self._exec_action('forward')
+
+        elif action == 'done':
+            self._peeked = None; self._on_done()
 
     # ── Draw ─────────────────────────────────────────────────
     def _draw(self):
