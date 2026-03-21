@@ -13,12 +13,6 @@
 
 **ESP32-S3 · PlatformIO · Python/Pygame · Flood Fill · A\* · Telemetría Dual**
 
-Simulador físico completo + firmware competitivo para robot Micromouse
-
-<!-- Imagen Principal: Prototipo Físico -->
-
-<img src="fotos/TJ_Prototype.jpeg" width="600" alt="Prototipo físico del robot Micromouse TJ, mostrando la integración de la electrónica, chasis impreso en 3D y sensores de alta precisión listos para la pista.">
-
 ---
 
 [![ESP32-S3](https://img.shields.io/badge/ESP32--S3-DevKitC--1-blue?style=flat-square&logo=espressif)](https://www.espressif.com/)
@@ -35,6 +29,13 @@ Simulador físico completo + firmware competitivo para robot Micromouse
 ## ¿Qué es esto?
 
 **TJ Simulator** es un ecosistema completo para el desarrollo de un robot **Micromouse** competitivo, creado en la **Universidad Anáhuac Mayab** para la competencia **ROBGAM 2026**. El proyecto une dos mundos en un solo repositorio:
+
+Prototypo 02 del TinyJerry
+
+<!-- Imagen Principal: Prototipo Físico -->
+
+<img src="fotos/TJ_Prototype.jpeg" width="600" alt="Prototipo físico del robot Micromouse TJ, mostrando la integración de la electrónica, chasis impreso en 3D y sensores de alta precisión listos para la pista.">
+
 
 Un **simulador físico en Python/Pygame** que replica fielmente el comportamiento del robot — motores GA12-N20 con encoders duales de distinto CPR, IMU MPU6500 con integración de gyro, sensores ToF VL53L0X con raycast DDA, y PID de triple lazo — todo animado a 60 fps con física continua desacoplada del timer lógico.
 
