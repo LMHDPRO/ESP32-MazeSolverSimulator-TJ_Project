@@ -146,28 +146,43 @@ def flood_fill(robot, maze):
     for _ in range(cols*rows*12):
         if robot.is_at_goal(): break
         c,r = robot.col, robot.row
-        if not discovered[r][c]:
-            discovered[r][c]=True
-            L_mm,C_mm,R_mm = robot.read_sensors()
-            aF=_rel_to_abs(robot.heading,'F'); aL=_rel_to_abs(robot.heading,'L')
-            aR=_rel_to_abs(robot.heading,'R'); aB=_rel_to_abs(robot.heading,'B')
-            changed=False
-            for d,w in [(aF,C_mm<=OPEN_THR),(aL,L_mm<=OPEN_THR),
-                        (aR,R_mm<=OPEN_THR),(aB,False if last_dir else local.walls[r][c][aB])]:
-                if local.walls[r][c][d]!=w:
-                    local.set_wall(c,r,d,w); changed=True
-            if changed: recompute()
+
+        # Descubrir paredes SIEMPRE (no solo primera visita)
+        # Esto evita que el robot se quede bloqueado si el mapa
+        # local es inconsistente con el laberinto real
+        L_mm,C_mm,R_mm = robot.read_sensors()
+        aF=_rel_to_abs(robot.heading,'F'); aL=_rel_to_abs(robot.heading,'L')
+        aR=_rel_to_abs(robot.heading,'R'); aB=_rel_to_abs(robot.heading,'B')
+        changed=False
+        wall_B = False if last_dir is not None else True
+        for d,w in [(aF,C_mm<=OPEN_THR),(aL,L_mm<=OPEN_THR),
+                    (aR,R_mm<=OPEN_THR),(aB,wall_B)]:
+            if local.walls[r][c][d]!=w:
+                local.set_wall(c,r,d,w); changed=True
+        if changed: recompute()
 
         best_d,best_v = None, INF+1
         for d in Maze.DIR_LIST:
             nc,nr=local.next_cell(c,r,d)
             if local._valid(nc,nr) and local.can_move(c,r,d) and dist[nr][nc]<best_v:
                 best_v=dist[nr][nc]; best_d=d
-        if best_d is None: recompute(); continue
+
+        if best_d is None:
+            # Completamente atascado: resetear mapa local y recalcular
+            for rr in range(rows):
+                for cc in range(cols):
+                    local.walls[rr][cc] = {dd:False for dd in 'NESW'}
+            for rr in range(rows):
+                local.walls[rr][0]['W']=True; local.walls[rr][cols-1]['E']=True
+            for cc in range(cols):
+                local.walls[0][cc]['N']=True; local.walls[rows-1][cc]['S']=True
+            recompute(); continue
+
         for t in _turns(robot.heading, best_d): yield t
         yield 'forward'
         last_dir=best_d
     yield 'done'
+
 
 
 # ══════════════════════════════════════════════════════════════

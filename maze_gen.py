@@ -79,6 +79,26 @@ def _verify_single_entrance(maze: Maze):
     return len(external_open)
 
 
+def _best_facing(maze, col, row):
+    """
+    Returns the heading ('N','E','S','W') that has the most open space —
+    so the robot's first move is forward, not a turn.
+    Prefers direction away from the corner walls.
+    """
+    scores = {}
+    for d in ['N','E','S','W']:
+        if maze.has_wall(col, row, d):
+            scores[d] = 0
+            continue
+        # BFS depth from that direction
+        nc, nr = maze.next_cell(col, row, d)
+        if maze._valid(nc, nr):
+            scores[d] = 1 + (1 - maze.flood[nr][nc] / max(1, maze.cols*maze.rows))
+        else:
+            scores[d] = 0
+    return max(scores, key=scores.get)
+
+
 def start_from_corner(maze: Maze, corner: str):
     """
     Posiciona el inicio en la esquina indicada.
@@ -92,6 +112,9 @@ def start_from_corner(maze: Maze, corner: str):
         'top_right':    (cols-1,   0     ),
     }
     maze.start = positions.get(corner, (0, rows-1))
+    # Store best facing direction as hint for the Robot
+    col, row = maze.start
+    maze.start_heading = _best_facing(maze, col, row)
 
 
 def generate(cols: int, rows: int,
