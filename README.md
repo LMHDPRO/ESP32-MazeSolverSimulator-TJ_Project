@@ -54,7 +54,8 @@ Nota del Equipo: El código fuente público en este repositorio corresponde úni
 Durante los intentos oficiales en la competencia, el robot opera de forma 100% autónoma, y todos los sistemas de telemetría y conexión con este simulador se mantienen estrictamente desconectados.
 
 🛠️ Modelos 3D (STL): Si te interesa la estructura mecánica de nuestro Micromouse, los archivos de fabricación del chasis y componentes (T-Rex Competition Edition) están disponibles y documentados en Cults3D:
-👉 Descargar Modelos STL y Archivos en Cults3D
+
+👉 Descargar Modelos STL y Archivos en Cults3D https://cults3d.com/es/modelo-3d/juegos/competition-micromouse-robot-t-rex-competition-edition-esp32-tof-stl
 
 ---
 
