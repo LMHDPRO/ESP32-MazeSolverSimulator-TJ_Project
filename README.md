@@ -13,7 +13,11 @@
 
 **ESP32-S3 · PlatformIO · Python/Pygame · Flood Fill · A\* · Telemetría Dual**
 
-*Simulador físico completo + firmware competitivo para robot Micromouse*
+Simulador físico completo + firmware competitivo para robot Micromouse
+
+<!-- Imagen Principal: Prototipo Físico -->
+
+<img src="fotos/TJ_Prototype.jpeg" width="600" alt="Prototipo físico del robot Micromouse TJ, mostrando la integración de la electrónica, chasis impreso en 3D y sensores de alta precisión listos para la pista.">
 
 ---
 
@@ -42,8 +46,42 @@ ESTE SOFTWARE SOLO SE UTILIZÓ PARA OPTIMIZAR LOS ALGORITMOS PREVIOS A TENER UN 
 
 ---
 
-## Características
+⚠️ Declaración de Competitividad y Modelos 3D
 
+Nota del Equipo: El código fuente público en este repositorio corresponde únicamente a versiones de prueba y herramientas de simulación. Este software se utilizó de manera intensiva para optimizar la lógica y los algoritmos matemáticos previos a disponer del laberinto físico. No representa el código competitivo final del equipo.
+
+Durante los intentos oficiales en la competencia, el robot opera de forma 100% autónoma, y todos los sistemas de telemetría y conexión con este simulador se mantienen estrictamente desconectados.
+
+🛠️ Modelos 3D (STL): Si te interesa la estructura mecánica de nuestro Micromouse, los archivos de fabricación del chasis y componentes (T-Rex Competition Edition) están disponibles y documentados en Cults3D:
+👉 Descargar Modelos STL y Archivos en Cults3D
+
+---
+
+📜 Lineamientos de la Competencia (ROBGAM 2026)
+
+Este ecosistema fue diseñado estrictamente para cumplir con las siguientes directrices oficiales de la categoría Micromouse:
+
+Objetivo: Diseñar y construir un robot autónomo capaz de resolver un laberinto mediante el uso de algoritmos de navegación y toma de decisiones, llegando desde la Salida hasta la Meta en el menor tiempo posible.
+
+Especificaciones Críticas:
+
+Autonomía Total: El robot no podrá ser controlado, asistido, ni calibrado remotamente mientras se encuentre en la pista, mediante ningún tipo de dispositivo externo.
+
+Aislamiento: No se permite el uso de comunicación externa con dispositivos que reciban información fuera del entorno físico del laberinto.
+
+Dimensiones Máximas: Largo 10 cm | Ancho 10 cm | Altura Libre.
+
+Integridad Mecánica: Ninguna parte, accesorio o mecanismo podrá separarse del robot durante la competencia.
+
+Inicio Rápido: El robot deberá estar configurado para funcionar de forma inmediata al inicio de cada intento.
+
+Características
+
+🧠 Simulador Python y Entorno (Open Source)
+
+<div align="center">
+<img src="fotos/SoftwareSS.jpeg" width="700" alt="Grid 16x16 del laberinto simulado, mostrando la interfaz gráfica con el trazado del laberinto oficial, telemetría visual y elementos dinámicos del robot.">
+</div>
 ### Simulador Python
 
 | | Función | Detalle |
@@ -388,9 +426,9 @@ TJ-Simulator/
 
 ## Licencia
 
-MIT License — úsalo, modifícalo y distribúyelo libremente.
+Licencia del Simulador (Python): MIT License — Úsalo, modifícalo y distribúyelo libremente.
 
----
+Licencia de Firmware: Propietario / Uso Exclusivo del Equipo TJ.
 
 <div align="center">
 <sub>TJ Simulator · ESP32-S3 Micromouse · Made with ☕ in Mérida, MX</sub>
